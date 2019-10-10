@@ -149,6 +149,9 @@ class Peer extends stream.Duplex {
     this._pc.ontrack = event => {
       this._onTrack(event)
     }
+    this._pc.onaddstream = event => {
+      this._onAddStream(event)
+    }
 
     if (this.initiator) {
       this._needsNegotiation()
@@ -269,10 +272,13 @@ class Peer extends stream.Duplex {
    */
   addStream (stream) {
     this._debug('addStream()')
-
-    stream.getTracks().forEach(track => {
-      this.addTrack(track, stream)
-    })
+    if (this._pc.addStream) {
+      this._pc.addStream(stream);
+    } else {
+      stream.getTracks().forEach(track => {
+        this.addTrack(track, stream)
+      })
+    }
   }
 
   /**
@@ -447,6 +453,7 @@ class Peer extends stream.Duplex {
       this._pc.onsignalingstatechange = null
       this._pc.onicecandidate = null
       this._pc.ontrack = null
+      this._pc.onaddstream = null
       this._pc.ondatachannel = null
     }
     this._pc = null
@@ -957,6 +964,23 @@ class Peer extends stream.Duplex {
     if (this.destroyed) return
     this._debug('on channel close')
     this.destroy()
+  }
+
+  _onAddStream(event) {
+    if (this.destroyed) return;
+
+    stream.getTracks.forEach(track => {
+      this._remoteTracks.push({
+        track: track,
+        stream: event.stream
+      });
+      this.emit('track', track, event.stream)
+    });
+
+    this._remoteStreams.push(event.stream)
+    queueMicrotask(() => {
+      this.emit('stream', event.stream)
+    })
   }
 
   _onTrack (event) {
