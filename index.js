@@ -968,19 +968,9 @@ class Peer extends stream.Duplex {
 
   _onAddStream(event) {
     if (this.destroyed) return;
-
-    stream.getTracks.forEach(track => {
-      this._remoteTracks.push({
-        track: track,
-        stream: event.stream
-      });
-      this.emit('track', track, event.stream)
+    event.stream.getTracks().forEach(track => {
+      this._onTrack({ streams: [event.stream], track: track  });
     });
-
-    this._remoteStreams.push(event.stream)
-    queueMicrotask(() => {
-      this.emit('stream', event.stream)
-    })
   }
 
   _onTrack (event) {
