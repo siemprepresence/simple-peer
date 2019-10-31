@@ -197,6 +197,7 @@ class Peer extends stream.Duplex {
       this.addTransceiver(data.transceiverRequest.kind, data.transceiverRequest.init)
     }
     if (data.candidate) {
+      this._debug('got candidate');
       if (this._pc.localDescription && this._pc.localDescription.type && this._pc.remoteDescription && this._pc.remoteDescription.type) {
         this._addIceCandidate(data.candidate)
       } else {
@@ -206,6 +207,7 @@ class Peer extends stream.Duplex {
     if (data.sdp) {
       this._pc.setRemoteDescription(new (this._wrtc.RTCSessionDescription)(data))
         .then(() => {
+          this._debug('got sdp', this._pc.remoteDescription.type);
           if (this.destroyed) return
 
           this._pendingCandidates.forEach(candidate => {
@@ -274,6 +276,7 @@ class Peer extends stream.Duplex {
     this._debug('addStream()')
     if (this._pc.addStream) {
       this._pc.addStream(stream);
+      this._needsNegotiation();
     } else {
       stream.getTracks().forEach(track => {
         this.addTrack(track, stream)
@@ -358,10 +361,15 @@ class Peer extends stream.Duplex {
    */
   removeStream (stream) {
     this._debug('removeSenders()')
-
-    stream.getTracks().forEach(track => {
-      this.removeTrack(track, stream)
-    })
+    
+    if (this._pc.removeStream) {
+      this._pc.removeStream(stream);
+      this._needsNegotiation();
+    } else {
+      stream.getTracks().forEach(track => {
+        this.removeTrack(track, stream)
+      })
+    }
   }
 
   _needsNegotiation () {
@@ -576,13 +584,15 @@ class Peer extends stream.Duplex {
         offer.sdp = this.sdpTransform(offer.sdp)
 
         const sendOffer = () => {
-          if (this.destroyed) return
-          var signal = this._pc.localDescription || offer
-          this._debug('signal')
-          this.emit('signal', {
-            type: signal.type,
-            sdp: signal.sdp
-          })
+          this._pc.createOffer(this.offerOptions).then(fullOffer => {
+            if (this.destroyed) return
+            var signal = fullOffer
+            this._debug('signal')
+            this.emit('signal', {
+              type: signal.type,
+              sdp: signal.sdp
+            })
+          });
         }
 
         const onSuccess = () => {
@@ -627,12 +637,22 @@ class Peer extends stream.Duplex {
 
         const sendAnswer = () => {
           if (this.destroyed) return
-          var signal = this._pc.localDescription || answer
-          this._debug('signal')
-          this.emit('signal', {
-            type: signal.type,
-            sdp: signal.sdp
-          })
+          this._pc.createAnswer(this.answerOptions)
+            .then(fullAnswer => {
+              this._pc.setLocalDescription(fullAnswer)
+                .then(() => {
+                  var signal = fullAnswer
+                  this._debug('signal')
+                  this.emit('signal', {
+                    type: signal.type,
+                    sdp: signal.sdp
+                  })
+                }).catch(err => {
+                  this.destroy(makeError(err, 'ERR_SET_LOCAL_DESCRIPTION'))
+                })
+            }).catch(err => {
+              this.destroy(makeError(err, 'ERR_CREATE_ANSWER'))
+            })
           if (!this.initiator) this._requestMissingTransceivers()
         }
 
@@ -646,6 +666,8 @@ class Peer extends stream.Duplex {
           this.destroy(makeError(err, 'ERR_SET_LOCAL_DESCRIPTION'))
         }
 
+        answer.type = 'pranswer'
+        answer.sdp = answer.sdp.replace(/a=recvonly/g, 'a=inactive');
         this._pc.setLocalDescription(answer)
           .then(onSuccess)
           .catch(onError)
@@ -967,6 +989,7 @@ class Peer extends stream.Duplex {
   }
 
   _onAddStream(event) {
+    this._debug('on add stream');
     if (this.destroyed) return;
     event.stream.getTracks().forEach(track => {
       this._onTrack({ streams: [event.stream], track: track  });
